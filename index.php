@@ -1,5 +1,5 @@
 <?php
-// index.php (V7.5.9 - FINAL LOGIC: Checkbox is reversible transaction. Deletion is non-reversing (user keeps points/count). Permanent toggle is pure metadata.)
+// index.php (V7.6.2 - Enabled click feedback on Collected(💎) button)
 
 // --- CRITICAL CONFIGURATION ---
 ini_set('display_errors', 1);
@@ -116,13 +116,23 @@ function updateUserData(&$user, $dbManager) {
     $dbManager->saveUserData($user['username'], $dataToSave);
 }
 
-// --- DAILY RESET & SP COLLECTION LOGIC ---
-
+/**
+ * [FIX #2 - RESET LAG FIX]
+ * Implements an immediate timestamp update and save (Lock) to prevent concurrent 
+ * or repeated heavy reset calculations during the midnight transition.
+ */
 function checkDailyReset(&$user, $dbManager) {
     $now = getCurrentTime(); 
     $today_midnight_ts = (clone $now)->setTime(0, 0, 0)->getTimestamp();
 
     if ($user['last_task_refresh'] < $today_midnight_ts) {
+        // --- CRITICAL LOCK/OPTIMIZATION START ---
+        // 1. Immediately update and save the refresh time to the DB.
+        // This LOCKS out any simultaneous/immediate second request, preventing lag.
+        $user['last_task_refresh'] = $now->getTimestamp();
+        $dbManager->saveUserData($user['username'], ['last_task_refresh' => $user['last_task_refresh']]);
+        // --- CRITICAL LOCK/OPTIMIZATION END ---
+
         // --- FAILURE LOGIC (Flat fail count preserved as requested) ---
         if ($user['is_failed_system_enabled'] == 1 && defined('DAILY_FAILURE_PENALTY')) {
             $missingQuota = $user['daily_quota'] - $user['daily_completed_count'];
@@ -160,7 +170,7 @@ function checkDailyReset(&$user, $dbManager) {
         $dbManager->saveTasks($user['username'], 'all_tasks', json_encode($updatedTasks));
 
         $user['daily_completed_count'] = 0; 
-        $user['last_task_refresh'] = $now->getTimestamp(); 
+        // last_task_refresh is already updated and saved above (the LOCK).
     }
     updateUserData($user, $dbManager);
 }
@@ -180,10 +190,12 @@ function handleSpCollect(&$user, $dbManager) {
     );
 
     if (!$isEligible) {
-        echo json_encode(['success' => false, 'message' => 'Error: Daily 💎 already collected! Next collection is after 12:00 AM.']);
+        // Updated failure message for cleaner pop-up
+        echo json_encode(['success' => false, 'message' => 'Error: Daily Diamond has already been collected today. Try again after 12:00 AM!']);
         return;
     }
 
+    // --- V7.6.1 FIX: Use constant DAILY_CHECKIN_REWARD ---
     $reward = defined('DAILY_CHECKIN_REWARD') ? DAILY_CHECKIN_REWARD : 10;
     $user['sp_points'] += $reward;
     $user['last_sp_collect'] = $now->getTimestamp(); 
@@ -250,13 +262,16 @@ function handleTaskActions(&$user, $dbManager) {
                     } else {
                         // --- B. Un-Ticked (Completed = false) - REVERSIBLE TRANSACTION END ---
                         if ($taskWasClaimed) {
-                            // Deduct points and count
+                            // Deduct points (reversible money)
                             $user['claimed_task_points'] -= $reward;
                             if ($user['claimed_task_points'] < 0) {
                                 $user['claimed_task_points'] = 0;
                             }  
                             
-                            $user['daily_completed_count']--; // QUOTA COUNT DECREMENTED
+                            // FIX #1: REMOVED VULNERABLE LINE
+                            // The Quota Count (Effort) is LOCKED once earned for the day.
+                            // $user['daily_completed_count']--; 
+                            
                             $task['claimed'] = false; // Revert claimed status
                             $response['points_change'] = '-'.$reward . ' (Reverted)';
                         } else {
@@ -331,11 +346,15 @@ function handleObjectiveSave(&$user, $dbManager) {
 
 function handleQuotaSave(&$user, $dbManager) {
     header('Content-Type: application/json');
-    $quota = (int)($_POST['quota'] ?? 4);
+    
+    // V7.6.1 FIX: Removed max quota logic.
+    $quota = (int)($_POST['quota'] ?? 1); 
     
     if ($quota < 1) {
         $quota = 1;
     }
+    
+    // The max limit was removed in V7.6.1
 
     $user['daily_quota'] = $quota;
     updateUserData($user, $dbManager);
@@ -366,7 +385,6 @@ function checkMaintenanceStatus() {
     
     // Define the time points for today (based on $now's date)
     $midnight = (clone $now)->setTime(0, 0, 0);
-    $tomorrow_midnight = (clone $midnight)->modify('+1 day');
 
     // Time window targets
     $t_start = '23:58:00';
@@ -435,7 +453,7 @@ function handleRequest(&$user, $dbManager) {
     $isContentFetch = ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['content_only']));
     
     if (!$isMaintenance) {
-        checkDailyReset($user, $dbManager);
+        checkDailyReset($user, $dbManager); // [FIX #2 - RESET LAG FIX]: Now fast on subsequent loads
     }
     
     if (isset($_GET['action'])) {
@@ -697,7 +715,7 @@ function generateHtml($user, $dbManager, $status, $renderTaskHtmlCallback, $isCo
         <?php endif; ?>
         
         <div class="sp-btn-container">
-            <button id="sp-collect-btn" onclick="collectSp()" class="auth-btn" <?php if (!$canCollectSp) echo 'disabled'; ?>>
+            <button id="sp-collect-btn" onclick="collectSp()" class="auth-btn">
                 <?php echo $spButtonText; ?>
             </button>
         </div>
@@ -1052,14 +1070,18 @@ function generateHtml($user, $dbManager, $status, $renderTaskHtmlCallback, $isCo
              return;
         }
         
+        // Temporarily disable while waiting for server response
         button.disabled = true; 
 
         const result = await postAction({ 
             endpoint: 'sp_collect' 
         });
 
+        // V7.6.2: Alert the result message from the server regardless of success/failure
+        alert(result.message); 
+
         if (result.success) {
-            alert(result.message);
+            // If successful, update the button and stats
             updateStatsDisplay({
                 tp: document.getElementById('tp-stats').textContent, 
                 sp: result.sp_points,
@@ -1070,7 +1092,7 @@ function generateHtml($user, $dbManager, $status, $renderTaskHtmlCallback, $isCo
             });
             button.textContent = 'Collected(💎)'; 
         } else if (result.message !== 'Maintenance Mode') {
-            alert(result.message);
+            // If failure (e.g., already collected), re-enable the button
             button.disabled = false; 
         }
     }
@@ -1114,6 +1136,10 @@ function generateHtml($user, $dbManager, $status, $renderTaskHtmlCallback, $isCo
         }
     }
     
+    /**
+     * [FIX #3 - FORCED RELOAD FIX]
+     * Replaces window.location.reload() with instant DOM manipulation.
+     */
     async function toggleFailureSystem() {
         if (document.getElementById('app-wrapper').classList.contains('lockout-active')) {
              alert("System is in Hospital 🏥. Please wait for the daily reset.");
@@ -1131,13 +1157,24 @@ function generateHtml($user, $dbManager, $status, $renderTaskHtmlCallback, $isCo
             
             const toggleBtn = document.getElementById('failure-toggle-btn');
             const statusTextSpan = document.getElementById('failure-status-text');
+            const failedStatLine = document.getElementById('failed-stat-line');
+            const quotaContainer = document.getElementById('quota-input-container');
             
-            toggleBtn.textContent = isEnabled ? 'Off' : 'On'; //'Disable System' : 'Enable System';
-            statusTextSpan.textContent = `Fail System: ${result.status_text}`;
-            
+            // 1. Update text and attributes
+            toggleBtn.textContent = isEnabled ? 'Off' : 'On'; 
+            statusTextSpan.textContent = `Fail System: ${isEnabled ? '⟨ON 🟢⟩' : '⟨OFF 🔴⟩'}`;
             toggleBtn.setAttribute('data-enabled', isEnabled ? 'true' : 'false');
             
-            window.location.reload(); 
+            // 2. [OPTIMIZATION] Show/Hide elements instantly
+            if (failedStatLine) {
+                 failedStatLine.style.display = isEnabled ? 'block' : 'none';
+            }
+            if (quotaContainer) {
+                quotaContainer.style.display = isEnabled ? 'flex' : 'none';
+            }
+            
+            alert(result.message);
+            // window.location.reload(); // LINE REMOVED!
             
         } else if (result.message !== 'Maintenance Mode') {
             alert(result.message);
