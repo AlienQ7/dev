@@ -1082,28 +1082,25 @@ function generateHtml($user, $dbManager, $status, $renderTaskHtmlCallback, $isCo
             alert(result.message);
         }
     }
-    
-// --- DEFINITIVE COLLECT SP FUNCTION (V7.6.41 FIX) ---
-    async function collectSp() {
-        // The element is now a DIV, not a button, but it retains the ID
-        const button = document.getElementById('sp-collect-btn');
-        const collectTextSpan = button.querySelector('.collect-text'); 
 
+// --- DEFINITIVE COLLECT SP FUNCTION (FIXED UI UPDATE) ---
+    async function collectSp() {
+        const button = document.getElementById('sp-collect-btn');
+        // V7.6.41 FIX: Target the element itself, not a non-existent span
+        
         if (document.getElementById('app-wrapper').classList.contains('lockout-active')) {
              alert("System is in Hospital 🏥. Please wait for the daily reset.");
              return;
         }
         
-        // FIX 1: Instant feedback for 'CLAIMED' state (This logic is now 100% reliable)
+        // Fix 1: Instant feedback for 'CLAIMED' state
         if (button.getAttribute('data-collected') === 'true') {
-            // The click is now registered from anywhere on the div, and the message is instant.
             alert('Error: Daily Diamond has already been collected today. Try again after 12:00 AM!');
-            return; // EXIT FUNCTION IMMEDIATELY
+            return;
         }
 
-        // CRITICAL FIX: To prevent double-clicks, we visually disable it by changing its class 
-        // (since it's not a button, .disabled doesn't work).
-        button.classList.add('collecting-in-progress'); // Use a CSS class to visually disable/fade it
+        // CRITICAL FIX: To prevent double-clicks, we visually disable it
+        button.classList.add('collecting-in-progress'); 
 
         const result = await postAction({ 
             endpoint: 'sp_collect' 
@@ -1126,21 +1123,20 @@ function generateHtml($user, $dbManager, $status, $renderTaskHtmlCallback, $isCo
                 daily_count: document.getElementById('daily-count-stats').textContent
             });
             
-            // Update the text and the state attribute
-            if (collectTextSpan) { 
-                collectTextSpan.textContent = 'CLAIMED';
-            }
+            // --- THE CRITICAL UI FIX ---
+            button.textContent = 'CLAIMED'; // <--- UPDATING THE BUTTON'S TEXT CONTENT DIRECTLY
+            // ---------------------------
+            
+            // Update the state attribute and remove temporary visual lock
             button.setAttribute('data-collected', 'true');
-            button.classList.remove('collecting-in-progress'); // Remove temporary visual lock
+            button.classList.remove('collecting-in-progress'); 
 
         } else if (result.message !== 'Maintenance Mode') {
             // 3. ON FAILURE (e.g., network error): RE-ENABLE VISUAL LOCK
-            button.classList.remove('collecting-in-progress'); // Allow re-try if not claimed
+            button.classList.remove('collecting-in-progress');
         }
     }
 // --- END DEFINITIVE COLLECT SP FUNCTION ---
-
-
     async function saveDailyQuota() {
         const input = document.getElementById('daily-quota-input');
         let quota = parseInt(input.value.trim(), 10);
