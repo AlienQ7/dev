@@ -1,5 +1,5 @@
 <?php
-// index.php (V7.6.41 - FINAL FIX: Reliable Claimed Button Click Area)
+// index.php (V7.7.0 - FIX: Daily Completed Count Deduction on Untick)
 
 // --- CRITICAL CONFIGURATION ---
 ini_set('display_errors', 1);
@@ -269,7 +269,9 @@ function handleTaskActions(&$user, $dbManager) {
                                 $user['claimed_task_points'] = 0;
                             }  
                             
-                            // *** RETAINED: $user['daily_completed_count']--; (As requested, do NOT touch this count) ***
+                            // *** V7.7.0 FIX: Deduct the daily completed count as well ***
+                            $user['daily_completed_count']--; 
+                            // *************************************************************
                             
                             $task['claimed'] = false; // Revert claimed status
                             $response['points_change'] = '-'.$reward . ' (Reverted)';
