@@ -693,11 +693,14 @@ function generateHtml($user, $dbManager, $status, $renderTaskHtmlCallback, $isCo
         </div>
     </div>
 </div>
+<div id="app-wrapper" class="<?php echo $isMaintenance ? 'lockout-active' : ''; ?>">
+<?php if ($isWarning): ?>
 <div class="pre-warning-marquee" id="warning-marquee">
     <marquee behavior="scroll" direction="left" scrollamount="6">
         🚨 SYSTEM ALERT: Daily maintenance and reset will begin in less than one minute (at 11:58 PM)! Please finish your current tasks. 🚨
     </marquee>
 </div>
+<?php endif; ?>
 <div class="container">
     <div class="profile-container">
         <h2>Dev: <?php echo htmlspecialchars($user['username']); ?></h2>
